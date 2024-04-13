@@ -87,7 +87,7 @@ public class Neo4jSinkWriter implements SinkWriter<SeaTunnelRow, Void, Void> {
                         .collect(
                                 Collectors.toMap(
                                         Map.Entry::getKey,
-                                        e -> element.getField((Integer) e.getValue())));
+                                        e -> element.getField(Integer.parseInt(e.getValue()))));
         final Query query = new Query(neo4jSinkQueryInfo.getQuery(), queryParamPosition);
         writeByQuery(query);
     }

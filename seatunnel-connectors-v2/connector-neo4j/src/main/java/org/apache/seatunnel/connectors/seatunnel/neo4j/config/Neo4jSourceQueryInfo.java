@@ -17,13 +17,12 @@
 
 package org.apache.seatunnel.connectors.seatunnel.neo4j.config;
 
-import org.apache.seatunnel.shade.com.typesafe.config.Config;
-
+import org.apache.seatunnel.api.configuration.ReadonlyConfig;
 import org.apache.seatunnel.common.constants.PluginType;
 
 public class Neo4jSourceQueryInfo extends Neo4jQueryInfo {
 
-    public Neo4jSourceQueryInfo(Config pluginConfig) {
+    public Neo4jSourceQueryInfo(ReadonlyConfig pluginConfig) {
         super(pluginConfig, PluginType.SOURCE);
     }
 }

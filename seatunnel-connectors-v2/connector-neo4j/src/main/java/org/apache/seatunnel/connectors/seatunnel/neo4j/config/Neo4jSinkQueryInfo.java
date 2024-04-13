@@ -17,21 +17,15 @@
 
 package org.apache.seatunnel.connectors.seatunnel.neo4j.config;
 
-import org.apache.seatunnel.shade.com.typesafe.config.Config;
-
-import org.apache.seatunnel.api.common.SeaTunnelAPIErrorCode;
-import org.apache.seatunnel.common.config.CheckConfigUtil;
-import org.apache.seatunnel.common.config.CheckResult;
+import org.apache.seatunnel.api.configuration.ReadonlyConfig;
 import org.apache.seatunnel.common.constants.PluginType;
 import org.apache.seatunnel.connectors.seatunnel.neo4j.constants.SinkWriteMode;
-import org.apache.seatunnel.connectors.seatunnel.neo4j.exception.Neo4jConnectorException;
 
 import lombok.Getter;
 import lombok.Setter;
 
 import java.util.Map;
 
-import static org.apache.seatunnel.connectors.seatunnel.neo4j.config.Neo4jCommonConfig.PLUGIN_NAME;
 import static org.apache.seatunnel.connectors.seatunnel.neo4j.config.Neo4jSinkConfig.MAX_BATCH_SIZE;
 import static org.apache.seatunnel.connectors.seatunnel.neo4j.config.Neo4jSinkConfig.QUERY_PARAM_POSITION;
 import static org.apache.seatunnel.connectors.seatunnel.neo4j.config.Neo4jSinkConfig.WRITE_MODE;
@@ -40,7 +34,7 @@ import static org.apache.seatunnel.connectors.seatunnel.neo4j.config.Neo4jSinkCo
 @Setter
 public class Neo4jSinkQueryInfo extends Neo4jQueryInfo {
 
-    private Map<String, Object> queryParamPosition;
+    private Map<String, String> queryParamPosition;
     private Integer maxBatchSize;
 
     private SinkWriteMode writeMode;
@@ -49,10 +43,10 @@ public class Neo4jSinkQueryInfo extends Neo4jQueryInfo {
         return SinkWriteMode.BATCH.equals(writeMode);
     }
 
-    public Neo4jSinkQueryInfo(Config config) {
+    public Neo4jSinkQueryInfo(ReadonlyConfig config) {
         super(config, PluginType.SINK);
 
-        this.writeMode = prepareWriteMode(config);
+        this.writeMode = config.get(WRITE_MODE);
 
         if (SinkWriteMode.BATCH.equals(writeMode)) {
             prepareBatchWriteConfig(config);
@@ -61,45 +55,14 @@ public class Neo4jSinkQueryInfo extends Neo4jQueryInfo {
         }
     }
 
-    private void prepareOneByOneConfig(Config config) {
-
-        CheckResult queryConfigCheck =
-                CheckConfigUtil.checkAllExists(config, QUERY_PARAM_POSITION.key());
-
-        if (!queryConfigCheck.isSuccess()) {
-            throw new Neo4jConnectorException(
-                    SeaTunnelAPIErrorCode.CONFIG_VALIDATION_FAILED,
-                    String.format(
-                            "PluginName: %s, PluginType: %s, Message: %s",
-                            PLUGIN_NAME, PluginType.SINK, queryConfigCheck.getMsg()));
-        }
-
+    private void prepareOneByOneConfig(ReadonlyConfig config) {
         // set queryParamPosition
-        this.queryParamPosition = config.getObject(QUERY_PARAM_POSITION.key()).unwrapped();
+        this.queryParamPosition = config.get(QUERY_PARAM_POSITION);
     }
 
-    private void prepareBatchWriteConfig(Config config) {
+    private void prepareBatchWriteConfig(ReadonlyConfig config) {
 
         // batch size
-        if (config.hasPath(MAX_BATCH_SIZE.key())) {
-            int batchSize = config.getInt(MAX_BATCH_SIZE.key());
-            if (batchSize <= 0) {
-                throw new Neo4jConnectorException(
-                        SeaTunnelAPIErrorCode.CONFIG_VALIDATION_FAILED,
-                        String.format(
-                                "PluginName: %s, PluginType: %s, Message: %s",
-                                PLUGIN_NAME, PluginType.SINK, "maxBatchSize must greater than 0"));
-            }
-            this.maxBatchSize = batchSize;
-        } else {
-            this.maxBatchSize = MAX_BATCH_SIZE.defaultValue();
-        }
-    }
-
-    private SinkWriteMode prepareWriteMode(Config config) {
-        if (config.hasPath(WRITE_MODE.key())) {
-            return config.getEnum(SinkWriteMode.class, WRITE_MODE.key());
-        }
-        return WRITE_MODE.defaultValue();
+        this.maxBatchSize = config.get(MAX_BATCH_SIZE);
     }
 }

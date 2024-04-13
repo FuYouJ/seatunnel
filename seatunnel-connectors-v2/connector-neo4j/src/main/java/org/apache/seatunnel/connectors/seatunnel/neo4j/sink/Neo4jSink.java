@@ -17,45 +17,36 @@
 
 package org.apache.seatunnel.connectors.seatunnel.neo4j.sink;
 
-import org.apache.seatunnel.shade.com.typesafe.config.Config;
-
-import org.apache.seatunnel.api.common.PrepareFailException;
+import org.apache.seatunnel.api.configuration.ReadonlyConfig;
 import org.apache.seatunnel.api.sink.SeaTunnelSink;
 import org.apache.seatunnel.api.sink.SinkWriter;
+import org.apache.seatunnel.api.table.catalog.CatalogTableUtil;
 import org.apache.seatunnel.api.table.type.SeaTunnelRow;
 import org.apache.seatunnel.api.table.type.SeaTunnelRowType;
 import org.apache.seatunnel.connectors.seatunnel.neo4j.config.Neo4jSinkQueryInfo;
 
 import com.google.auto.service.AutoService;
 
-import java.io.IOException;
-
 import static org.apache.seatunnel.connectors.seatunnel.neo4j.config.Neo4jSinkConfig.PLUGIN_NAME;
 
 @AutoService(SeaTunnelSink.class)
 public class Neo4jSink implements SeaTunnelSink<SeaTunnelRow, Void, Void, Void> {
 
-    private SeaTunnelRowType rowType;
-    private Neo4jSinkQueryInfo neo4JSinkQueryInfo;
+    private final SeaTunnelRowType rowType;
+    private final Neo4jSinkQueryInfo neo4JSinkQueryInfo;
 
     @Override
     public String getPluginName() {
         return PLUGIN_NAME;
     }
 
-    @Override
-    public void prepare(Config config) throws PrepareFailException {
+    public Neo4jSink(ReadonlyConfig config) {
         this.neo4JSinkQueryInfo = new Neo4jSinkQueryInfo(config);
+        this.rowType = CatalogTableUtil.buildWithConfig(config).getSeaTunnelRowType();
     }
 
     @Override
-    public void setTypeInfo(SeaTunnelRowType seaTunnelRowType) {
-        this.rowType = seaTunnelRowType;
-    }
-
-    @Override
-    public SinkWriter<SeaTunnelRow, Void, Void> createWriter(SinkWriter.Context context)
-            throws IOException {
+    public SinkWriter<SeaTunnelRow, Void, Void> createWriter(SinkWriter.Context context) {
         return new Neo4jSinkWriter(neo4JSinkQueryInfo, rowType);
     }
 }

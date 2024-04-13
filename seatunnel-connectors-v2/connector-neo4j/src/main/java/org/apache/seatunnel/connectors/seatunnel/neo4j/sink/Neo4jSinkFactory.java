@@ -18,8 +18,11 @@
 package org.apache.seatunnel.connectors.seatunnel.neo4j.sink;
 
 import org.apache.seatunnel.api.configuration.util.OptionRule;
+import org.apache.seatunnel.api.sink.SeaTunnelSink;
+import org.apache.seatunnel.api.table.connector.TableSink;
 import org.apache.seatunnel.api.table.factory.Factory;
 import org.apache.seatunnel.api.table.factory.TableSinkFactory;
+import org.apache.seatunnel.api.table.factory.TableSinkFactoryContext;
 
 import com.google.auto.service.AutoService;
 
@@ -36,7 +39,8 @@ import static org.apache.seatunnel.connectors.seatunnel.neo4j.config.Neo4jSinkCo
 import static org.apache.seatunnel.connectors.seatunnel.neo4j.config.Neo4jSinkConfig.QUERY_PARAM_POSITION;
 
 @AutoService(Factory.class)
-public class Neo4jSinkFactory implements TableSinkFactory {
+public class Neo4jSinkFactory<IN, StateT, CommitInfoT, AggregatedCommitInfoT>
+        implements TableSinkFactory<IN, StateT, CommitInfoT, AggregatedCommitInfoT> {
     @Override
     public String factoryIdentifier() {
         return PLUGIN_NAME;
@@ -54,5 +58,13 @@ public class Neo4jSinkFactory implements TableSinkFactory {
                         KEY_MAX_CONNECTION_TIMEOUT,
                         KEY_MAX_TRANSACTION_RETRY_TIME)
                 .build();
+    }
+
+    @Override
+    public TableSink<IN, StateT, CommitInfoT, AggregatedCommitInfoT> createSink(
+            TableSinkFactoryContext context) {
+        return () ->
+                (SeaTunnelSink<IN, StateT, CommitInfoT, AggregatedCommitInfoT>)
+                        new Neo4jSink(context.getOptions());
     }
 }
