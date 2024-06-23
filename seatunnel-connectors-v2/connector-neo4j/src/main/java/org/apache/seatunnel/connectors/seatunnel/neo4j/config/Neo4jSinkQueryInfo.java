@@ -17,9 +17,11 @@
 
 package org.apache.seatunnel.connectors.seatunnel.neo4j.config;
 
+import org.apache.seatunnel.api.common.SeaTunnelAPIErrorCode;
 import org.apache.seatunnel.api.configuration.ReadonlyConfig;
 import org.apache.seatunnel.common.constants.PluginType;
 import org.apache.seatunnel.connectors.seatunnel.neo4j.constants.SinkWriteMode;
+import org.apache.seatunnel.connectors.seatunnel.neo4j.exception.Neo4jConnectorException;
 
 import lombok.Getter;
 import lombok.Setter;
@@ -57,7 +59,13 @@ public class Neo4jSinkQueryInfo extends Neo4jQueryInfo {
 
     private void prepareOneByOneConfig(ReadonlyConfig config) {
         // set queryParamPosition
-        this.queryParamPosition = config.get(QUERY_PARAM_POSITION);
+        this.queryParamPosition =
+                config.getOptional(QUERY_PARAM_POSITION)
+                        .orElseThrow(
+                                () ->
+                                        new Neo4jConnectorException(
+                                                SeaTunnelAPIErrorCode.CONFIG_VALIDATION_FAILED,
+                                                "queryParamPosition must be configured in ONE BY ONE mode"));
     }
 
     private void prepareBatchWriteConfig(ReadonlyConfig config) {

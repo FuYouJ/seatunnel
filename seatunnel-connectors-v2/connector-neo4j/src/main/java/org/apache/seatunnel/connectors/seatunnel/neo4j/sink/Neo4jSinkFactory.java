@@ -36,7 +36,6 @@ import static org.apache.seatunnel.connectors.seatunnel.neo4j.config.Neo4jCommon
 import static org.apache.seatunnel.connectors.seatunnel.neo4j.config.Neo4jCommonConfig.KEY_USERNAME;
 import static org.apache.seatunnel.connectors.seatunnel.neo4j.config.Neo4jCommonConfig.PLUGIN_NAME;
 import static org.apache.seatunnel.connectors.seatunnel.neo4j.config.Neo4jSinkConfig.KEY_NEO4J_URI;
-import static org.apache.seatunnel.connectors.seatunnel.neo4j.config.Neo4jSinkConfig.QUERY_PARAM_POSITION;
 
 @AutoService(Factory.class)
 public class Neo4jSinkFactory<IN, StateT, CommitInfoT, AggregatedCommitInfoT>
@@ -49,7 +48,7 @@ public class Neo4jSinkFactory<IN, StateT, CommitInfoT, AggregatedCommitInfoT>
     @Override
     public OptionRule optionRule() {
         return OptionRule.builder()
-                .required(KEY_NEO4J_URI, KEY_DATABASE, KEY_QUERY, QUERY_PARAM_POSITION)
+                .required(KEY_NEO4J_URI, KEY_DATABASE, KEY_QUERY)
                 .optional(
                         KEY_USERNAME,
                         KEY_PASSWORD,
