@@ -234,7 +234,7 @@ public class ElasticsearchIT extends TestSuiteBase implements TestResource {
         Container.ExecResult execResult =
                 container.executeJob("/elasticsearch/elasticsearch_source_and_sink_full_type.conf");
         Assertions.assertEquals(0, execResult.getExitCode());
-        Thread.sleep(2000L);
+        Thread.sleep(5000L);
         Assertions.assertEquals(
                 1,
                 esRestClient.getIndexDocsCount("st_index_full_type_target").get(0).getDocsCount());
