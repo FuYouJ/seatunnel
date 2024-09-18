@@ -19,8 +19,9 @@ package org.apache.seatunnel.engine.server;
 
 import org.apache.seatunnel.api.common.metrics.MetricTags;
 import org.apache.seatunnel.api.event.Event;
+import org.apache.seatunnel.api.tracing.MDCExecutorService;
+import org.apache.seatunnel.api.tracing.MDCTracer;
 import org.apache.seatunnel.common.utils.ExceptionUtils;
-import org.apache.seatunnel.common.utils.RetryUtils;
 import org.apache.seatunnel.common.utils.StringFormatUtils;
 import org.apache.seatunnel.engine.common.Constant;
 import org.apache.seatunnel.engine.common.config.ConfigProvider;
@@ -30,7 +31,6 @@ import org.apache.seatunnel.engine.common.exception.JobNotFoundException;
 import org.apache.seatunnel.engine.common.utils.PassiveCompletableFuture;
 import org.apache.seatunnel.engine.core.classloader.ClassLoaderService;
 import org.apache.seatunnel.engine.core.job.ConnectorJarIdentifier;
-import org.apache.seatunnel.engine.server.event.JobEventReportOperation;
 import org.apache.seatunnel.engine.server.exception.TaskGroupContextNotFoundException;
 import org.apache.seatunnel.engine.server.execution.ExecutionState;
 import org.apache.seatunnel.engine.server.execution.ProgressState;
@@ -49,12 +49,11 @@ import org.apache.seatunnel.engine.server.service.jar.ServerConnectorPackageClie
 import org.apache.seatunnel.engine.server.task.SeaTunnelTask;
 import org.apache.seatunnel.engine.server.task.TaskGroupImmutableInformation;
 import org.apache.seatunnel.engine.server.task.operation.NotifyTaskStatusOperation;
-import org.apache.seatunnel.engine.server.utils.NodeEngineUtil;
 
 import org.apache.commons.collections4.CollectionUtils;
 
 import com.google.common.collect.Lists;
-import com.google.common.util.concurrent.ThreadFactoryBuilder;
+import com.hazelcast.core.OperationTimeoutException;
 import com.hazelcast.instance.impl.NodeState;
 import com.hazelcast.internal.metrics.DynamicMetricsProvider;
 import com.hazelcast.internal.metrics.MetricDescriptor;
@@ -73,7 +72,6 @@ import lombok.SneakyThrows;
 
 import java.io.IOException;
 import java.net.URL;
-import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -81,7 +79,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
-import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
@@ -147,13 +144,13 @@ public class TaskExecutionService implements DynamicMetricsProvider {
 
     private final ServerConnectorPackageClient serverConnectorPackageClient;
 
-    private final BlockingQueue<Event> eventBuffer;
-    private final ExecutorService eventForwardService;
+    private final EventService eventService;
 
     public TaskExecutionService(
             ClassLoaderService classLoaderService,
             NodeEngineImpl nodeEngine,
-            HazelcastProperties properties) {
+            HazelcastProperties properties,
+            EventService eventService) {
         seaTunnelConfig = ConfigProvider.locateAndGetSeaTunnelConfig();
         this.hzInstanceName = nodeEngine.getHazelcastInstance().getName();
         this.nodeEngine = nodeEngine;
@@ -176,42 +173,7 @@ public class TaskExecutionService implements DynamicMetricsProvider {
         serverConnectorPackageClient =
                 new ServerConnectorPackageClient(nodeEngine, seaTunnelConfig);
 
-        eventBuffer = new ArrayBlockingQueue<>(2048);
-        eventForwardService =
-                Executors.newSingleThreadExecutor(
-                        new ThreadFactoryBuilder().setNameFormat("event-forwarder-%d").build());
-        eventForwardService.submit(
-                () -> {
-                    List<Event> events = new ArrayList<>();
-                    RetryUtils.RetryMaterial retryMaterial =
-                            new RetryUtils.RetryMaterial(2, true, e -> true);
-                    while (!Thread.currentThread().isInterrupted()) {
-                        try {
-                            events.clear();
-
-                            Event first = eventBuffer.take();
-                            events.add(first);
-
-                            eventBuffer.drainTo(events, 500);
-                            JobEventReportOperation operation = new JobEventReportOperation(events);
-
-                            RetryUtils.retryWithException(
-                                    () ->
-                                            NodeEngineUtil.sendOperationToMasterNode(
-                                                            nodeEngine, operation)
-                                                    .join(),
-                                    retryMaterial);
-
-                            logger.fine("Event forward success, events " + events.size());
-                        } catch (InterruptedException e) {
-                            Thread.currentThread().interrupt();
-                            logger.info("Event forward thread interrupted");
-                        } catch (Throwable t) {
-                            logger.warning(
-                                    "Event forward failed, discard events " + events.size(), t);
-                        }
-                    }
-                });
+        this.eventService = eventService;
     }
 
     public void start() {
@@ -222,7 +184,6 @@ public class TaskExecutionService implements DynamicMetricsProvider {
         isRunning = false;
         executorService.shutdownNow();
         scheduledExecutorService.shutdown();
-        eventForwardService.shutdownNow();
     }
 
     public TaskGroupContext getExecutionContext(TaskGroupLocation taskGroupLocation) {
@@ -275,6 +236,7 @@ public class TaskExecutionService implements DynamicMetricsProvider {
 
     private void submitBlockingTask(
             TaskGroupExecutionTracker taskGroupExecutionTracker, List<Task> tasks) {
+        MDCExecutorService mdcExecutorService = MDCTracer.tracing(executorService);
 
         CountDownLatch startedLatch = new CountDownLatch(tasks.size());
         taskGroupExecutionTracker.blockingFutures =
@@ -291,7 +253,7 @@ public class TaskExecutionService implements DynamicMetricsProvider {
                                                 "BlockingWorker-"
                                                         + taskGroupExecutionTracker.taskGroup
                                                                 .getTaskGroupLocation()))
-                        .map(executorService::submit)
+                        .map(mdcExecutorService::submit)
                         .collect(toList());
 
         // Do not return from this method until all workers have started. Otherwise,
@@ -414,10 +376,15 @@ public class TaskExecutionService implements DynamicMetricsProvider {
                                                         seaTunnelConfig
                                                                 .getEngineConfig()
                                                                 .getTaskExecutionThreadShareMode();
-                                                if (mode.equals(ThreadShareMode.ALL)) return true;
-                                                if (mode.equals(ThreadShareMode.OFF)) return false;
-                                                if (mode.equals(ThreadShareMode.PART))
+                                                if (mode.equals(ThreadShareMode.ALL)) {
+                                                    return true;
+                                                }
+                                                if (mode.equals(ThreadShareMode.OFF)) {
+                                                    return false;
+                                                }
+                                                if (mode.equals(ThreadShareMode.PART)) {
                                                     return t.isThreadsShare();
+                                                }
                                                 return true;
                                             }));
             executionContexts.put(
@@ -458,7 +425,7 @@ public class TaskExecutionService implements DynamicMetricsProvider {
                                             r.getTaskGroupLocation(), r.getExecutionState()));
                             notifyTaskStatusToMaster(taskGroup.getTaskGroupLocation(), r);
                         }),
-                executorService);
+                MDCTracer.tracing(executorService));
         return new PassiveCompletableFuture<>(resultFuture);
     }
 
@@ -530,7 +497,8 @@ public class TaskExecutionService implements DynamicMetricsProvider {
         if (!taskAsyncFunctionFuture.containsKey(taskGroupLocation)) {
             taskAsyncFunctionFuture.put(taskGroupLocation, new ConcurrentHashMap<>());
         }
-        CompletableFuture<?> future = CompletableFuture.runAsync(task, executorService);
+        CompletableFuture<?> future =
+                CompletableFuture.runAsync(task, MDCTracer.tracing(executorService));
         taskAsyncFunctionFuture.get(taskGroupLocation).put(id, future);
         future.whenComplete(
                 (r, e) -> {
@@ -624,9 +592,12 @@ public class TaskExecutionService implements DynamicMetricsProvider {
                                     });
                 });
         if (localMap.size() > 0) {
+            boolean lockedIMap = false;
             try {
-                if (!metricsImap.tryLock(
-                        Constant.IMAP_RUNNING_JOB_METRICS_KEY, 2, TimeUnit.SECONDS)) {
+                lockedIMap =
+                        metricsImap.tryLock(
+                                Constant.IMAP_RUNNING_JOB_METRICS_KEY, 5, TimeUnit.SECONDS);
+                if (!lockedIMap) {
                     logger.warning("try lock failed in update metrics");
                     return;
                 }
@@ -640,7 +611,17 @@ public class TaskExecutionService implements DynamicMetricsProvider {
                         "The Imap acquisition failed due to the hazelcast node being offline or restarted, and will be retried next time",
                         e);
             } finally {
-                metricsImap.unlock(Constant.IMAP_RUNNING_JOB_METRICS_KEY);
+                if (lockedIMap) {
+                    boolean unLockedIMap = false;
+                    while (!unLockedIMap) {
+                        try {
+                            metricsImap.unlock(Constant.IMAP_RUNNING_JOB_METRICS_KEY);
+                            unLockedIMap = true;
+                        } catch (OperationTimeoutException e) {
+                            logger.warning("unlock imap failed in update metrics", e);
+                        }
+                    }
+                }
             }
         }
         this.printTaskExecutionRuntimeInfo();
@@ -668,10 +649,7 @@ public class TaskExecutionService implements DynamicMetricsProvider {
     }
 
     public void reportEvent(Event e) {
-        while (!eventBuffer.offer(e)) {
-            eventBuffer.poll();
-            logger.warning("Event buffer is full, discard the oldest event");
-        }
+        eventService.reportEvent(e);
     }
 
     private final class BlockingWorker implements Runnable {
@@ -936,7 +914,7 @@ public class TaskExecutionService implements DynamicMetricsProvider {
                             .forEach(f -> f.cancel(true));
                 }
             } catch (CancellationException ignore) {
-                // ignore
+                logger.warning(ExceptionUtils.getMessage(ignore));
             }
         }
 
@@ -952,22 +930,42 @@ public class TaskExecutionService implements DynamicMetricsProvider {
                 finishedExecutionContexts.put(
                         taskGroupLocation, executionContexts.remove(taskGroupLocation));
                 cancellationFutures.remove(taskGroupLocation);
-                cancelAsyncFunction(taskGroupLocation);
-                updateMetricsContextInImap();
+                try {
+                    cancelAsyncFunction(taskGroupLocation);
+                } catch (Throwable t) {
+                    logger.severe("cancel async function failed", t);
+                }
+                try {
+                    updateMetricsContextInImap();
+                } catch (Throwable t) {
+                    logger.severe("update metrics context in imap failed", t);
+                }
                 if (ex == null) {
+                    logger.info(
+                            String.format(
+                                    "taskGroup %s complete with FINISHED", taskGroupLocation));
                     future.complete(
                             new TaskExecutionState(taskGroupLocation, ExecutionState.FINISHED));
                     return;
                 } else if (isCancel.get()) {
+                    logger.info(
+                            String.format(
+                                    "taskGroup %s complete with CANCELED", taskGroupLocation));
                     future.complete(
                             new TaskExecutionState(taskGroupLocation, ExecutionState.CANCELED));
                     return;
                 } else {
+                    logger.info(
+                            String.format("taskGroup %s complete with FAILED", taskGroupLocation));
                     future.complete(
                             new TaskExecutionState(taskGroupLocation, ExecutionState.FAILED, ex));
                 }
             }
             if (!isCancel.get() && ex != null) {
+                logger.info(
+                        String.format(
+                                "task %s error with exception: [%s], cancel other task in taskGroup %s.",
+                                task.getTaskID(), ex, taskGroupLocation));
                 cancelAllTask(taskGroupLocation);
             }
         }

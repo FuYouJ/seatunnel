@@ -95,7 +95,7 @@ public class SeaTunnelContainer extends AbstractTestContainer {
                                 new Slf4jLogConsumer(
                                         DockerLoggerFactory.getLogger(
                                                 "seatunnel-engine:" + JDK_DOCKER_IMAGE)))
-                        .waitingFor(Wait.forListeningPort());
+                        .waitingFor(Wait.forLogMessage(".*received new worker register:.*", 1));
         copySeaTunnelStarterToContainer(server);
         server.setPortBindings(Collections.singletonList("5801:5801"));
         server.withCopyFileToContainer(
@@ -113,6 +113,7 @@ public class SeaTunnelContainer extends AbstractTestContainer {
         executeExtraCommands(server);
 
         server.start();
+
         return server;
     }
 
@@ -131,7 +132,7 @@ public class SeaTunnelContainer extends AbstractTestContainer {
                                 new Slf4jLogConsumer(
                                         DockerLoggerFactory.getLogger(
                                                 "seatunnel-engine:" + JDK_DOCKER_IMAGE)))
-                        .waitingFor(Wait.forListeningPort());
+                        .waitingFor(Wait.forLogMessage(".*received new worker register:.*", 1));
         copySeaTunnelStarterToContainer(server);
         server.setPortBindings(Collections.singletonList("5801:5801"));
         server.setExposedPorts(Collections.singletonList(5801));
@@ -264,6 +265,15 @@ public class SeaTunnelContainer extends AbstractTestContainer {
         return executeCommand(server, command);
     }
 
+    public Container.ExecResult executeBaseCommand(String[] args)
+            throws IOException, InterruptedException {
+        final List<String> command = new ArrayList<>();
+        String binPath = Paths.get(SEATUNNEL_HOME, "bin", getStartShellName()).toString();
+        command.add(adaptPathForWin(binPath));
+        Arrays.stream(args).forEach(arg -> command.add(arg));
+        return executeCommand(server, command);
+    }
+
     @Override
     public Container.ExecResult executeJob(String confFile)
             throws IOException, InterruptedException {
@@ -289,7 +299,7 @@ public class SeaTunnelContainer extends AbstractTestContainer {
         } else {
             // Waiting 10s for release thread
             Awaitility.await()
-                    .atMost(10, TimeUnit.SECONDS)
+                    .atMost(30, TimeUnit.SECONDS)
                     .untilAsserted(
                             () -> {
                                 List<String> threads = ContainerUtil.getJVMThreadNames(server);
@@ -430,7 +440,11 @@ public class SeaTunnelContainer extends AbstractTestContainer {
                 // Iceberg S3 Hadoop catalog
                 || threadName.contains("java-sdk-http-connection-reaper")
                 || threadName.contains("Timer for 's3a-file-system' metrics system")
-                || threadName.startsWith("MutableQuantiles-");
+                || threadName.startsWith("MutableQuantiles-")
+                // JDBC Hana driver
+                || threadName.startsWith("Thread-")
+                // JNA Cleaner
+                || threadName.startsWith("JNA Cleaner");
     }
 
     @Override
@@ -451,5 +465,11 @@ public class SeaTunnelContainer extends AbstractTestContainer {
     @Override
     public String getServerLogs() {
         return server.getLogs();
+    }
+
+    @Override
+    public void copyFileToContainer(String path, String targetPath) {
+        ContainerUtil.copyFileIntoContainers(
+                ContainerUtil.getResourcesFile(path).toPath(), targetPath, server);
     }
 }

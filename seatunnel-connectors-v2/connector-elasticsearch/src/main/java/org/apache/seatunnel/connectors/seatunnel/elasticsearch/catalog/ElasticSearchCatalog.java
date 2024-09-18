@@ -110,8 +110,7 @@ public class ElasticSearchCatalog implements Catalog {
     public boolean databaseExists(String databaseName) throws CatalogException {
         // check if the index exist
         try {
-            List<IndexDocsCount> indexDocsCount = esRestClient.getIndexDocsCount(databaseName);
-            return true;
+            return esRestClient.checkIndexExist(databaseName);
         } catch (Exception e) {
             log.error(
                     String.format(
@@ -217,8 +216,7 @@ public class ElasticSearchCatalog implements Catalog {
 
     @Override
     public void truncateTable(TablePath tablePath, boolean ignoreIfNotExists) {
-        dropTable(tablePath, ignoreIfNotExists);
-        createTable(tablePath, null, ignoreIfNotExists);
+        esRestClient.clearIndexData(tablePath.getTableName());
     }
 
     @Override
